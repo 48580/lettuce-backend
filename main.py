@@ -4,18 +4,26 @@ import uvicorn
 
 app = FastAPI()
 
-# เปิดอนุญาต CORS ให้เว็บ Flutter บน Netlify สามารถส่ง request มาได้
+# Enable CORS for Flutter Web on Netlify
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # อนุญาตทุกโดเมน (รวมถึง Netlify)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],      # อนุญาตทุก HTTP Methods (POST, GET ฯลฯ)
-    allow_headers=["*"],      # อนุญาตทุก Headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Defined 4 disease classes
+CLASS_NAMES = [
+    "Healthy",
+    "Powdery Mildew",
+    "Downy Mildew",
+    "Other Diseases"
+]
 
 @app.get("/")
 def read_root():
-    return {"status": "Backend is running"}
+    return {"status": "Backend service is running."}
 
 @app.post("/predict")
 async def predict(
@@ -23,15 +31,16 @@ async def predict(
     lat: str = Form("0.0"),
     lng: str = Form("0.0")
 ):
-    # อ่านไฟล์รูปภาพที่ส่งมาจาก Flutter Web
+    # Read the uploaded image bytes
     image_bytes = await file.read()
     
     # -------------------------------------------------------------
-    # TODO: นำ image_bytes ไปเข้าโมเดลประมวลผลโรคผักของคุณตรงนี้
-    # ตัวอย่างโค้ดจำลองผลลัพธ์ (กรุณาปรับให้ตรงกับโค้ดโมเดลเดิมของคุณ):
+    # TODO: Connect your AI model prediction here
+    # Example: prediction_index, confidence = my_model.predict(image_bytes)
     # -------------------------------------------------------------
-    disease_name = "Bacterial Soft Rot"  # ตัวอย่างชื่อโรค
-    confidence_score = 0.95              # ตัวอย่างค่าความมั่นใจ (95%)
+    
+    disease_name = CLASS_NAMES[0]  # Replace with prediction result from your model
+    confidence_score = 0.95        # Replace with model confidence (0.0 - 1.0)
 
     return {
         "class": disease_name,

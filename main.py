@@ -2,11 +2,15 @@ from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import io
+import numpy as np
 from PIL import Image
+
+# สมมติถ้าใช้ TensorFlow/Keras:
+# import tensorflow as tf
+# model = tf.keras.models.load_model('your_model_file.h5')
 
 app = FastAPI()
 
-# Enable CORS for Flutter Web on Netlify
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,17 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Defined 4 disease classes (Must match your AI model's training order)
 CLASS_NAMES = [
     "Healthy",
     "Powdery Mildew",
     "Downy Mildew",
     "Other Diseases"
 ]
-
-@app.get("/")
-def read_root():
-    return {"status": "Lettuce Disease Detection Backend is running."}
 
 @app.post("/predict")
 async def predict(
@@ -34,24 +33,26 @@ async def predict(
     lng: str = Form("0.0")
 ):
     try:
-        # Read image bytes
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
         # -------------------------------------------------------------
-        # TODO: Insert your actual AI model prediction code here
-        # Example: 
-        #   processed_img = preprocess(image)
-        #   prediction_index, confidence = my_model.predict(processed_img)
+        # 💡 ส่วนที่ต้องเปลี่ยน: นำภาพเข้าโมเดล AI ของคุณจริง ๆ ตรงนี้
         # -------------------------------------------------------------
         
-        # Mock prediction result (Replace this with your model output)
-        predicted_index = 0       # 0 = Healthy, 1 = Powdery Mildew, etc.
-        confidence_score = 0.96   # Confidence score (0.0 - 1.0)
-
-        # Ensure index is within range
-        if predicted_index >= len(CLASS_NAMES):
-            predicted_index = 3
+        # 1. ปรับขนาดภาพให้ตรงกับที่โมเดลต้องการ (เช่น 224x224 พิกเซล)
+        image = image.resize((224, 224))
+        img_array = np.array(image) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        # 2. สั่งให้โมเดลทำนายผล (ตัวอย่างโครงสร้าง TensorFlow)
+        # predictions = model.predict(img_array)
+        # predicted_index = int(np.argmax(predictions[0]))
+        # confidence_score = float(np.max(predictions[0]))
+        
+        # (ชั่วคราว: หากยังไม่ได้ต่อโมเดล ให้บอกผมได้ครับ)
+        predicted_index = 0      
+        confidence_score = 0.95  
 
         disease_name = CLASS_NAMES[predicted_index]
 

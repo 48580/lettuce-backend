@@ -44,7 +44,10 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final XFile? image = await _picker.pickImage(source: source);
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        imageQuality: 80, // Optimize image size for faster web upload
+      );
       if (image != null) {
         final bytes = await image.readAsBytes();
         setState(() {
@@ -76,7 +79,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
     try {
       var request = http.MultipartRequest('POST', Uri.parse(_backendUrl));
       
-      // Attach image bytes for Web compatibility
+      // Attach image bytes for Flutter Web compatibility
       request.files.add(
         http.MultipartFile.fromBytes(
           'file',
@@ -85,7 +88,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
         ),
       );
 
-      // Attach mandatory lat and lng parameters
+      // Attach mandatory parameters to prevent 422 error
       request.fields['lat'] = '0.0';
       request.fields['lng'] = '0.0';
 
@@ -95,8 +98,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
       if (response.statusCode == 200) {
         var data = jsonDecode(response.body);
         setState(() {
-          String diseaseClass = data['class'] ?? data['label'] ?? 'Unknown';
-          var confidence = data['confidence'] ?? data['score'] ?? 0;
+          String diseaseClass = data['class'] ?? 'Unknown';
+          var confidence = data['confidence'] ?? 0;
           
           if (confidence is double) {
             confidence = (confidence * 100).toStringAsFixed(2);

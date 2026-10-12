@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# รายชื่อโรค (สามารถสลับลำดับชื่อได้ตามที่เทรนจริง)
+# รายชื่อโรค (เรียงตามลำดับคลาสทั่วไป)
 CLASS_NAMES = [
     "Healthy",
     "Powdery Mildew",
@@ -44,24 +44,29 @@ async def predict(
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        # ปรับขนาดภาพเป็น 640x640 และแปลงค่าพิกเซล
+        # ปรับขนาดภาพตามที่โมเดลต้องการ
         image = image.resize((640, 640))
         img_array = np.array(image, dtype=np.float32) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
         
-        # รันการทำนาย
+        # ส่งภาพเข้าโมเดลเพื่อทำนายจริง
         interpreter.set_tensor(input_details[0]['index'], img_array)
         interpreter.invoke()
         
         output_data = interpreter.get_tensor(output_details[0]['index'])
         preds = output_data[0]
         
+        # หาตำแหน่งที่โมเดลมั่นใจที่สุด
         pred_idx = int(np.argmax(preds))
         conf = float(np.max(preds))
+        
+        # จัดการค่า Confidence ถ้าค่าเกิน 1.0 (กรณีโมเดลใช้หน่วยอื่น)
+        if conf > 1.0:
+            conf = conf / 100.0
         if conf > 1.0:
             conf = 0.95
             
-        disease = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else "Healthy"
+        disease = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else "Unknown"
         
         return {
             "class": disease,
@@ -71,13 +76,7 @@ async def predict(
         }
         
     except Exception as e:
-        # กรณีเกิดข้อผิดพลาด คืนค่าเริ่มต้นเพื่อให้แอปไม่พัง
-        return {
-            "class": "Powdery Mildew",
-            "confidence": 0.95,
-            "lat": lat,
-            "lng": lng
-        }
+        return {"error": str(e)}, 500
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

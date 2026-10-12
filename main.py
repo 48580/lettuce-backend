@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Defined 4 disease classes
+# รายชื่อคลาสทั้ง 4 ตามลำดับ
 CLASS_NAMES = [
     "Healthy",
     "Powdery Mildew",
@@ -25,7 +25,7 @@ CLASS_NAMES = [
     "Other Diseases"
 ]
 
-# Load TFLite Model
+# โหลดโมเดล TFLite
 interpreter = tf.lite.Interpreter(model_path="best_int8.tflite")
 interpreter.allocate_tensors()
 
@@ -46,16 +46,25 @@ async def predict(
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        # Get model input shape
+        # ดึงขนาด Shape ที่โมเดลต้องการจริงๆ จาก input_details (เช่น [1, 640, 640, 3] หรือขนาดอื่นๆ)
         input_shape = input_details[0]['shape']
-        height, width = input_shape[1], input_shape[2]
+        expected_height = input_shape[1]
+        expected_width = input_shape[2]
         
-        # Preprocess image
-        image = image.resize((width, height))
-        img_array = np.array(image, dtype=np.float32) / 255.0
+        # ปรับขนาดภาพให้ตรงกับที่โมเดลต้องการเป๊ะๆ
+        image = image.resize((expected_width, expected_height))
+        
+        # แปลงภาพเป็น numpy array ตามประเภทข้อมูลที่โมเดลรองรับ (Float32 หรือ Int8/Uint8)
+        input_dtype = input_details[0]['dtype']
+        
+        if input_dtype == np.float32:
+            img_array = np.array(image, dtype=np.float32) / 255.0
+        else:
+            img_array = np.array(image, dtype=input_dtype)
+            
         img_array = np.expand_dims(img_array, axis=0)
 
-        # Run inference
+        # ส่งข้อมูลเข้าโมเดลเพื่อประมวลผล
         interpreter.set_tensor(input_details[0]['index'], img_array)
         interpreter.invoke()
         

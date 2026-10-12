@@ -1,9 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,12 +14,13 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Lettuce Disease Detector',
+      title: 'Lettuce Disease Detection',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
+        primarySwatch: Colors.green,
         useMaterial3: true,
       ),
       home: const DetectionScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -33,56 +33,61 @@ class DetectionScreen extends StatefulWidget {
 }
 
 class _DetectionScreenState extends State<DetectionScreen> {
-  File? _selectedImage;
+  Uint8List? _selectedImageBytes;
+  XFile? _pickedFile;
   bool _isLoading = false;
-  String _resultText = 'กรุณาถ่ายรูปหรือเลือกรูปภาพผักกาดหอม';
-  
-  // URL สำหรับรันบน Web/Chrome
-  final String _backendUrl =  'https://github.com/48580/lettuce-backend'
+  String _resultText = 'Please take a photo or select a lettuce image.';
+
+  // Backend API URL on Render
+  final String _backendUrl = 'https://lettuce-backend.onrender.com/predict';
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickImage(ImageSource source) async {
-    final XFile? image = await _picker.pickImage(source: source);
-    if (image != null) {
+    try {
+      final XFile? image = await _picker.pickImage(source: source);
+      if (image != null) {
+        final bytes = await image.readAsBytes();
+        setState(() {
+          _pickedFile = image;
+          _selectedImageBytes = bytes;
+          _resultText = 'Click "Analyze Disease" to process.';
+        });
+      }
+    } catch (e) {
       setState(() {
-        _selectedImage = File(image.path);
-        _resultText = 'กดปุ่ม "วิเคราะห์โรคผัก" เพื่อส่งข้อมูล';
+        _resultText = 'Error selecting image: $e';
       });
     }
   }
 
-  Future<Position?> _getCurrentLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return null;
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return null;
+  Future<void> _uploadImage() async {
+    if (_selectedImageBytes == null || _pickedFile == null) {
+      setState(() {
+        _resultText = 'Please select an image first.';
+      });
+      return;
     }
-
-    return await Geolocator.getCurrentPosition();
-  }
-
-  Future<void> _analyzeLettuce() async {
-    if (_selectedImage == null) return;
 
     setState(() {
       _isLoading = true;
-      _resultText = 'กำลังดึงพิกัด GPS และวิเคราะห์รูปภาพ...';
+      _resultText = 'Analyzing image... (May take 30-60 seconds)';
     });
 
     try {
-      Position? position = await _getCurrentLocation();
-      double lat = position?.latitude ?? 0.0;
-      double lng = position?.longitude ?? 0.0;
-
       var request = http.MultipartRequest('POST', Uri.parse(_backendUrl));
-      request.fields['lat'] = lat.toString();
-      request.fields['lng'] = lng.toString();
+      
+      // Attach image bytes for Web compatibility
       request.files.add(
-        await http.MultipartFile.fromPath('file', _selectedImage!.path),
+        http.MultipartFile.fromBytes(
+          'file',
+          _selectedImageBytes!,
+          filename: _pickedFile!.name,
+        ),
       );
+
+      // Attach mandatory lat and lng parameters
+      request.fields['lat'] = '0.0';
+      request.fields['lng'] = '0.0';
 
       var streamedResponse = await request.send();
       var response = await http.Response.fromStream(streamedResponse);
@@ -90,18 +95,23 @@ class _DetectionScreenState extends State<DetectionScreen> {
       if (response.statusCode == 200) {
         var data = jsonDecode(response.body);
         setState(() {
-          _resultText = 'ผลการตรวจ: ${data['disease_name'] ?? 'ไม่พบโรค'}\n'
-              'โซนแปลง (3x3m): ${data['zone_id'] ?? 'N/A'}\n'
-              'พิกัด: $lat, $lng';
+          String diseaseClass = data['class'] ?? data['label'] ?? 'Unknown';
+          var confidence = data['confidence'] ?? data['score'] ?? 0;
+          
+          if (confidence is double) {
+            confidence = (confidence * 100).toStringAsFixed(2);
+          }
+
+          _resultText = 'Analysis Result: $diseaseClass\nConfidence: $confidence%';
         });
       } else {
         setState(() {
-          _resultText = 'เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ (${response.statusCode})';
+          _resultText = 'Analysis failed. Code: ${response.statusCode}\n${response.body}';
         });
       }
     } catch (e) {
       setState(() {
-        _resultText = 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: $e';
+        _resultText = 'Failed to connect to server: $e';
       });
     } finally {
       setState(() {
@@ -114,66 +124,94 @@ class _DetectionScreenState extends State<DetectionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ระบบตรวจจับโรคผักกาดหอม'),
+        title: const Text('Lettuce Disease Detection System'),
+        centerTitle: true,
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Image Preview Widget
             Container(
-              height: 250,
-              width: double.infinity,
+              height: 300,
               decoration: BoxDecoration(
                 color: Colors.grey[200],
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey),
+                border: Border.all(color: Colors.grey.shade400),
               ),
-              child: _selectedImage != null
-                  ? Image.file(_selectedImage!, fit: BoxFit.cover)
+              child: _selectedImageBytes != null
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.memory(
+                        _selectedImageBytes!,
+                        fit: BoxFit.contain,
+                      ),
+                    )
                   : const Center(
-                      child: Icon(Icons.image, size: 80, color: Colors.grey),
+                      child: Text(
+                        'No image selected',
+                        style: TextStyle(color: Colors.grey, fontSize: 16),
+                      ),
                     ),
             ),
             const SizedBox(height: 16),
+
+            // Camera and Gallery Buttons
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton.icon(
                   onPressed: () => _pickImage(ImageSource.camera),
                   icon: const Icon(Icons.camera_alt),
-                  label: const Text('ถ่ายรูป'),
+                  label: const Text('Camera'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade100,
+                    foregroundColor: Colors.green.shade900,
+                  ),
                 ),
                 ElevatedButton.icon(
                   onPressed: () => _pickImage(ImageSource.gallery),
                   icon: const Icon(Icons.photo_library),
-                  label: const Text('เลือกรูป'),
+                  label: const Text('Gallery'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade100,
+                    foregroundColor: Colors.green.shade900,
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 20),
+
+            // Analyze Button
             ElevatedButton(
-              onPressed: _isLoading || _selectedImage == null ? null : _analyzeLettuce,
+              onPressed: _isLoading ? null : _uploadImage,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(45),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               child: _isLoading
                   ? const CircularProgressIndicator(color: Colors.white)
-                  : const Text('วิเคราะห์โรคผัก', style: TextStyle(fontSize: 16)),
+                  : const Text('Analyze Disease'),
             ),
             const SizedBox(height: 20),
-            Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  _resultText,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15),
-                ),
+
+            // Result Display Box
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Text(
+                _resultText,
+                style: const TextStyle(fontSize: 16),
+                textAlign: TextAlign.center,
               ),
             ),
           ],

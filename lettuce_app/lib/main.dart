@@ -46,7 +46,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
     try {
       final XFile? image = await _picker.pickImage(
         source: source,
-        imageQuality: 80, // Optimize image size for faster web upload
+        imageQuality: 80,
       );
       if (image != null) {
         final bytes = await image.readAsBytes();
@@ -73,13 +73,12 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
     setState(() {
       _isLoading = true;
-      _resultText = 'Analyzing image... (May take 30-60 seconds)';
+      _resultText = 'Analyzing image... (May take a few seconds)';
     });
 
     try {
       var request = http.MultipartRequest('POST', Uri.parse(_backendUrl));
       
-      // Attach image bytes for Flutter Web compatibility
       request.files.add(
         http.MultipartFile.fromBytes(
           'file',
@@ -88,7 +87,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
         ),
       );
 
-      // Attach mandatory parameters to prevent 422 error
       request.fields['lat'] = '0.0';
       request.fields['lng'] = '0.0';
 
@@ -96,20 +94,38 @@ class _DetectionScreenState extends State<DetectionScreen> {
       var response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
-        var data = jsonDecode(response.body);
-        setState(() {
-          String diseaseClass = data['class'] ?? 'Unknown';
-          var confidence = data['confidence'] ?? 0;
+        try {
+          final decodedBody = jsonDecode(response.body);
           
-          if (confidence is double) {
-            confidence = (confidence * 100).toStringAsFixed(2);
-          }
+          // ตรวจสอบรูปแบบข้อมูลที่เซิร์ฟเวอร์ส่งกลับมาอย่างปลอดภัย
+          if (decodedBody is Map<String, dynamic>) {
+            String diseaseClass = decodedBody['class']?.toString() ?? decodedBody['error']?.toString() ?? 'Unknown';
+            var confidence = decodedBody['confidence'] ?? 0;
+            
+            if (confidence is double) {
+              confidence = (confidence * 100).toStringAsFixed(2);
+            }
 
-          _resultText = 'Analysis Result: $diseaseClass\nConfidence: $confidence%';
-        });
+            setState(() {
+              _resultText = 'Analysis Result: $diseaseClass\nConfidence: $confidence%';
+            });
+          } else if (decodedBody is List) {
+            setState(() {
+              _resultText = 'Server returned a list: ${decodedBody.toString()}';
+            });
+          } else {
+            setState(() {
+              _resultText = 'Server response: ${decodedBody.toString()}';
+            });
+          }
+        } catch (e) {
+          setState(() {
+            _resultText = 'Failed to parse JSON: ${response.body}';
+          });
+        }
       } else {
         setState(() {
-          _resultText = 'Analysis failed. Code: ${response.statusCode}\n${response.body}';
+          _resultText = 'Analysis failed (${response.statusCode}):\n${response.body}';
         });
       }
     } catch (e) {
@@ -137,7 +153,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Image Preview Widget
             Container(
               height: 300,
               decoration: BoxDecoration(
@@ -161,8 +176,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
                     ),
             ),
             const SizedBox(height: 16),
-
-            // Camera and Gallery Buttons
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -187,8 +200,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ],
             ),
             const SizedBox(height: 20),
-
-            // Analyze Button
             ElevatedButton(
               onPressed: _isLoading ? null : _uploadImage,
               style: ElevatedButton.styleFrom(
@@ -202,8 +213,6 @@ class _DetectionScreenState extends State<DetectionScreen> {
                   : const Text('Analyze Disease'),
             ),
             const SizedBox(height: 20),
-
-            // Result Display Box
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

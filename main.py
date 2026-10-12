@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# รายชื่อคลาสโรคผักกาดหอมทั้ง 4
+# รายชื่อคลาสทั้ง 4 ตามลำดับ
 CLASS_NAMES = [
     "Healthy",
     "Powdery Mildew",
@@ -26,16 +26,11 @@ CLASS_NAMES = [
 ]
 
 # โหลดโมเดล TFLite
-try:
-    interpreter = tf.lite.Interpreter(model_path="best_int8.tflite")
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    MODEL_LOADED = True
-    print("Model loaded successfully. Input shape:", input_details[0]['shape'])
-except Exception as e:
-    print(f"Model load warning: {e}")
-    MODEL_LOADED = False
+interpreter = tf.lite.Interpreter(model_path="best_int8.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 @app.get("/")
 def read_root():
@@ -51,51 +46,40 @@ async def predict(
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        predicted_index = 0
-        confidence_score = 0.95
+        # ดึงขนาด input ที่โมเดลต้องการจากไฟล์ tflite โดยตรง (เช่น [1, 640, 640, 3] หรือ [1, 224, 224, 3])
+        input_shape = input_details[0]['shape']
+        input_dtype = input_details[0]['dtype']
+        
+        height = input_shape[1]
+        width = input_shape[2]
+        
+        # ปรับขนาดภาพให้เท่ากับที่โมเดลกำหนด
+        image_resized = image.resize((width, height))
+        
+        # แปลงข้อมูลรูปภาพให้เป็นประเภทเดียวกับที่โมเดลคาดหวัง
+        if input_dtype == np.float32:
+            img_array = np.array(image_resized, dtype=np.float32) / 255.0
+        else:
+            # สำหรับโมเดล int8/uint8
+            img_array = np.array(image_resized, dtype=input_dtype)
+            
+        # เติมมิติ Batch เข้าไปให้เป็น [1, height, width, channels]
+        img_array = np.expand_dims(img_array, axis=0)
 
-        if MODEL_LOADED:
-            try:
-                input_shape = input_details[0]['shape']
-                input_dtype = input_details[0]['dtype']
-                
-                # สร้าง Tensor ให้มีขนาดตรงกับที่โมเดลต้องการเป๊ะๆ (รองรับทุกรูปแบบ Shape)
-                if len(input_shape) == 4:
-                    batch, h, w, c = input_shape[0], input_shape[1], input_shape[2], input_shape[3]
-                    img_resized = image.resize((w, h))
-                    img_array = np.array(img_resized, dtype=np.float32) / 255.0
-                    
-                    # ถ้าจำนวนช่อง/มิติไม่ตรงกับที่โมเดลคาดหวัง (เช่น โมเดลต้องการ 640) ให้ทำการปรับแต่งโครงสร้างอาร์เรย์ให้อัตโนมัติ
-                    if img_array.shape[-1] != c:
-                        # สร้างอาร์เรย์เปล่าตาม Shape ของโมเดล
-                        final_input = np.zeros(input_shape, dtype=input_dtype)
-                        # คัดลอกข้อมูลใส่ลงไปเท่าที่ทำได้ ป้องกัน Dimension Mismatch
-                        min_c = min(img_array.shape[-1], c)
-                        final_input[0, :, :, :min_c] = img_array[:, :, :min_c]
-                        img_array = final_input
-                    else:
-                        if input_dtype != np.float32:
-                            img_array = img_array.astype(input_dtype)
-                        img_array = np.expand_dims(img_array, axis=0)
-                else:
-                    # กรณี Shape แบบอื่น สร้างอาร์เรย์สำรองตามขนาด input_shape
-                    img_array = np.zeros(input_shape, dtype=input_dtype)
+        # ส่งข้อมูลเข้าโมเดล TFLite เพื่อทำนายผลจริง
+        interpreter.set_tensor(input_details[0]['index'], img_array)
+        interpreter.invoke()
+        
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        predictions = output_data[0]
 
-                interpreter.set_tensor(input_details[0]['index'], img_array)
-                interpreter.invoke()
-                
-                output_data = interpreter.get_tensor(output_details[0]['index'])
-                predictions = output_data[0]
-                
-                if len(predictions) > 0:
-                    predicted_index = int(np.argmax(predictions))
-                    confidence_score = float(np.max(predictions))
-                    if confidence_score > 1.0:
-                        confidence_score = 0.95
-            except Exception as inf_err:
-                print(f"Inference exception: {inf_err}")
-                predicted_index = 0
-                confidence_score = 0.92
+        # หาคลาสที่มีค่าสูงสุด
+        predicted_index = int(np.argmax(predictions))
+        
+        # แปลงค่า Output เป็นความน่าจะเป็น (Softmax ถ้ายังไม่ได้แปลง)
+        exp_preds = np.exp(predictions - np.max(predictions))
+        probabilities = exp_preds / np.sum(exp_preds)
+        confidence_score = float(probabilities[predicted_index])
 
         disease_name = CLASS_NAMES[predicted_index] if predicted_index < len(CLASS_NAMES) else "Other Diseases"
 

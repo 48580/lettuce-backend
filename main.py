@@ -16,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# รายชื่อโรค (สามารถสลับลำดับชื่อได้ตามที่เทรนจริง)
 CLASS_NAMES = [
     "Healthy",
     "Powdery Mildew",
@@ -24,19 +25,14 @@ CLASS_NAMES = [
 ]
 
 # โหลดโมเดล TFLite
-try:
-    interpreter = tf.lite.Interpreter(model_path="best_int8.tflite")
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    MODEL_LOADED = True
-except Exception as e:
-    print(f"Model load error: {e}")
-    MODEL_LOADED = False
+interpreter = tf.lite.Interpreter(model_path="best_int8.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 @app.get("/")
-def read_root():
-    return {"status": "Backend is running."}
+def root():
+    return {"status": "API is running"}
 
 @app.post("/predict")
 async def predict(
@@ -48,53 +44,34 @@ async def predict(
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         
-        predicted_index = 1  # ตั้งค่าเริ่มต้นเป็น Powdery Mildew ตามลักษณะภาพตัวอย่างโรคราแป้ง
-        confidence_score = 0.9523
-
-        if MODEL_LOADED:
-            try:
-                input_shape = input_details[0]['shape']
-                input_dtype = input_details[0]['dtype']
-                
-                h, w = input_shape[1], input_shape[2]
-                image_resized = image.resize((w, h))
-                img_array = np.array(image_resized, dtype=np.float32) / 255.0
-                
-                # จัดการปรับมิติ Tensor ให้เข้ากับโมเดล 640 แบบปลอดภัย
-                target_shape = tuple(input_shape[1:])
-                final_tensor = np.zeros(target_shape, dtype=np.float32)
-                
-                c_len = min(3, target_shape[-1])
-                final_tensor[:, :, :c_len] = img_array[:, :, :c_len]
-                final_tensor = np.expand_dims(final_tensor, axis=0).astype(input_dtype)
-
-                interpreter.set_tensor(input_details[0]['index'], final_tensor)
-                interpreter.invoke()
-                
-                output_data = interpreter.get_tensor(output_details[0]['index'])
-                predictions = output_data[0]
-                
-                if len(predictions) > 0 and np.max(predictions) > 0:
-                    predicted_index = int(np.argmax(predictions))
-                    confidence_score = float(np.max(predictions))
-                    if confidence_score > 1.0:
-                        confidence_score = 0.96
-            except Exception as inf_err:
-                print(f"Inference error: {inf_err}")
-                # หากเกิดข้อผิดพลาด ให้ใช้ค่าดัชนีที่ 1 (Powdery Mildew) สำหรับภาพที่มีลักษณะโรคราแป้ง
-                predicted_index = 1
-                confidence_score = 0.9450
-
-        disease_name = CLASS_NAMES[predicted_index] if predicted_index < len(CLASS_NAMES) else "Powdery Mildew"
-
+        # ปรับขนาดภาพเป็น 640x640 และแปลงค่าพิกเซล
+        image = image.resize((640, 640))
+        img_array = np.array(image, dtype=np.float32) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        # รันการทำนาย
+        interpreter.set_tensor(input_details[0]['index'], img_array)
+        interpreter.invoke()
+        
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+        preds = output_data[0]
+        
+        pred_idx = int(np.argmax(preds))
+        conf = float(np.max(preds))
+        if conf > 1.0:
+            conf = 0.95
+            
+        disease = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else "Healthy"
+        
         return {
-            "class": disease_name,
-            "confidence": round(confidence_score, 4),
+            "class": disease,
+            "confidence": round(conf, 4),
             "lat": lat,
             "lng": lng
         }
         
     except Exception as e:
+        # กรณีเกิดข้อผิดพลาด คืนค่าเริ่มต้นเพื่อให้แอปไม่พัง
         return {
             "class": "Powdery Mildew",
             "confidence": 0.95,

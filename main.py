@@ -14,14 +14,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+]
 
-# 📌 สำคัญมาก: ให้สลับเรียงลำดับชื่อโรคตรงนี้ ให้ตรงกับตอนที่คุณเทรนโมเดล (Index 0, 1, 2, 3...)
+# เรียงลำดับชื่อโรคให้ตรงกับตอนเทรนโมเดล
 CLASS_NAMES = [
-    "Healthy",          # ตรวจสอบดูว่าตอนเทรน Index 0 คืออะไร
-    "Powdery Mildew",   # Index 1 คืออะไร
-    "Downy Mildew",     # Index 2 คืออะไร
-    "Other Diseases"    # Index 3 คืออะไร
+    "Healthy",
+    "Powdery Mildew",
+    "Downy Mildew",
+    "Other Diseases"
 ]
 
 # โหลดโมเดล TFLite
@@ -53,20 +53,34 @@ async def predict(
         conf = 0.95
 
         if MODEL_LOADED:
-            input_shape = input_details[0]['shape']
+            input_shape = input_details[0]['shape'] # เช่น [1, 3, 640, 640] หรือ [1, 640, 640, 3]
             input_dtype = input_details[0]['dtype']
             
-            h, w = input_shape[1], input_shape[2]
-            image_resized = image.resize((w, h))
-            
-            if input_dtype == np.float32:
-                img_array = np.array(image_resized, dtype=np.float32) / 255.0
+            # ตรวจสอบโครงสร้างมิติของโมเดลว่า Channel (3) อยู่หน้าหรืออยู่หลัง
+            if len(input_shape) == 4:
+                if input_shape[1] == 3:  # รูปแบบ NCHW (เช่น [1, 3, H, W])
+                    h, w = input_shape[2], input_shape[3]
+                    image_resized = image.resize((w, h))
+                    img_array = np.array(image_resized, dtype=np.float32) / 255.0
+                    img_array = np.transpose(img_array, (2, 0, 1)) # สลับเป็น (3, H, W)
+                else:  # รูปแบบ NHWC (เช่น [1, H, W, 3])
+                    h, w = input_shape[1], input_shape[2]
+                    image_resized = image.resize((w, h))
+                    img_array = np.array(image_resized, dtype=np.float32) / 255.0
             else:
-                img_array = np.array(image_resized, dtype=input_dtype)
-                
-            img_array = np.expand_dims(img_array, axis=0)
-            img_array = np.reshape(img_array, input_shape)
+                image_resized = image.resize((640, 640))
+                img_array = np.array(image_resized, dtype=np.float32) / 255.0
 
+            # แปลงประเภทข้อมูลให้ตรงกับที่โมเดล Int8 / Float กำหนด
+            if input_dtype == np.int8 or input_dtype == np.uint8:
+                img_array = (img_array * 255.0).astype(input_dtype)
+            else:
+                img_array = img_array.astype(np.float32)
+
+            # เพิ่มมิติ Batch เข้าไปด้านหน้าให้ครบ 4 มิติพอดีกับ input_shape
+            img_array = np.expand_dims(img_array, axis=0)
+
+            # ป้อนข้อมูลเข้า Interpreter โดยใช้ Shape ตรงๆ ของโมเดลโดยไม่บังคับยัดขนาดผิดๆ
             interpreter.set_tensor(input_details[0]['index'], img_array)
             interpreter.invoke()
             
@@ -86,7 +100,6 @@ async def predict(
             if conf > 1.0:
                 conf = conf / 100.0
 
-        # แสดงผลลัพธ์ตามชื่อคลาสที่แมพกับ Index ของโมเดลโดยตรง
         disease = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else "Other Diseases"
         
         return {
